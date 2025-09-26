@@ -9,19 +9,19 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 
-let callState = { isCalling: false, isMuted: false, channelName: null };
+// Store active calls per channel
+let calls = {}; // { channelName: { users: [uid1, uid2, ...] } }
 
-// Generate Agora Token
-function generateToken(channelName) {
+// Generate Agora token
+function generateToken(channelName, uid) {
   const appID = process.env.AGORA_APP_ID;
   const appCertificate = process.env.AGORA_APP_CERTIFICATE;
-  const uid = 0; // 0 means generate a random UID on client side
   const role = RtcRole.PUBLISHER;
-  const expirationTimeInSeconds = 3600; // 1 hour
+  const expirationTimeInSeconds = 3600;
   const currentTimestamp = Math.floor(Date.now() / 1000);
   const privilegeExpireTs = currentTimestamp + expirationTimeInSeconds;
 
-  const token = RtcTokenBuilder.buildTokenWithUid(
+  return RtcTokenBuilder.buildTokenWithUid(
     appID,
     appCertificate,
     channelName,
@@ -29,42 +29,47 @@ function generateToken(channelName) {
     role,
     privilegeExpireTs
   );
-  return token;
 }
 
 // Start Call
 app.post("/api/call/start", (req, res) => {
-  const { to } = req.body; // frontend number/contact
-  if (!to) return res.status(400).json({ error: "Number required" });
+  const { number } = req.body; // optional, for UI label
+  const channelName = "call_" + Date.now();
+  const uid = Math.floor(Math.random() * 100000); // unique UID
 
-  const channelName = "call_" + Date.now(); // unique channel per call
-  const token = generateToken(channelName);
+  const token = generateToken(channelName, uid);
 
-  callState = { isCalling: true, isMuted: false, channelName };
+  // Initialize call
+  calls[channelName] = { users: [uid] };
 
-  console.log(`Call started with ${to} on channel ${channelName}`);
-  res.json({ message: "Call started", channelName, token });
+  console.log(`Call started with ${number || "unknown"} on channel ${channelName}`);
+
+  res.json({ channelName, uid, token });
+});
+
+// Join existing call
+app.post("/api/call/join", (req, res) => {
+  const { channelName } = req.body;
+  if (!channelName || !calls[channelName])
+    return res.status(400).json({ error: "Channel does not exist" });
+
+  const uid = Math.floor(Math.random() * 100000);
+  const token = generateToken(channelName, uid);
+
+  calls[channelName].users.push(uid);
+
+  res.json({ channelName, uid, token });
 });
 
 // End Call
 app.post("/api/call/end", (req, res) => {
-  if (!callState.isCalling)
+  const { channelName } = req.body;
+  if (!channelName || !calls[channelName])
     return res.status(400).json({ error: "No active call" });
 
-  console.log(`Call ended on channel ${callState.channelName}`);
-  callState = { isCalling: false, isMuted: false, channelName: null };
+  delete calls[channelName];
+  console.log(`Call ended on channel ${channelName}`);
   res.json({ message: "Call ended" });
-});
-
-// Mute / Unmute
-app.post("/api/call/mute", (req, res) => {
-  const { mute } = req.body;
-  if (!callState.isCalling)
-    return res.status(400).json({ error: "No active call" });
-
-  callState.isMuted = !!mute;
-  console.log(`Call is now ${callState.isMuted ? "Muted" : "Unmuted"}`);
-  res.json({ message: `Call ${callState.isMuted ? "muted" : "unmuted"}` });
 });
 
 app.listen(PORT, () => {
