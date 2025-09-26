@@ -7,35 +7,66 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT || 5000;
 
-const APP_ID = process.env.AGORA_APP_ID;
-const APP_CERTIFICATE = process.env.AGORA_APP_CERTIFICATE;
+let callState = { isCalling: false, isMuted: false, channelName: null };
 
-app.post("/api/agora/token", (req, res) => {
-  const { channelName, uid } = req.body;
-
-  if (!channelName || !uid) {
-    return res.status(400).json({ error: "channelName and uid required" });
-  }
-
-  // Token expires in 1 hour
-  const expireTime = 3600;
+// Generate Agora Token
+function generateToken(channelName) {
+  const appID = process.env.AGORA_APP_ID;
+  const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+  const uid = 0; // 0 means generate a random UID on client side
+  const role = RtcRole.PUBLISHER;
+  const expirationTimeInSeconds = 3600; // 1 hour
   const currentTimestamp = Math.floor(Date.now() / 1000);
-  const privilegeExpireTs = currentTimestamp + expireTime;
+  const privilegeExpireTs = currentTimestamp + expirationTimeInSeconds;
 
   const token = RtcTokenBuilder.buildTokenWithUid(
-    APP_ID,
-    APP_CERTIFICATE,
+    appID,
+    appCertificate,
     channelName,
     uid,
-    RtcRole.PUBLISHER,
+    role,
     privilegeExpireTs
   );
+  return token;
+}
 
-  res.json({ token });
+// Start Call
+app.post("/api/call/start", (req, res) => {
+  const { to } = req.body; // frontend number/contact
+  if (!to) return res.status(400).json({ error: "Number required" });
+
+  const channelName = "call_" + Date.now(); // unique channel per call
+  const token = generateToken(channelName);
+
+  callState = { isCalling: true, isMuted: false, channelName };
+
+  console.log(`Call started with ${to} on channel ${channelName}`);
+  res.json({ message: "Call started", channelName, token });
+});
+
+// End Call
+app.post("/api/call/end", (req, res) => {
+  if (!callState.isCalling)
+    return res.status(400).json({ error: "No active call" });
+
+  console.log(`Call ended on channel ${callState.channelName}`);
+  callState = { isCalling: false, isMuted: false, channelName: null };
+  res.json({ message: "Call ended" });
+});
+
+// Mute / Unmute
+app.post("/api/call/mute", (req, res) => {
+  const { mute } = req.body;
+  if (!callState.isCalling)
+    return res.status(400).json({ error: "No active call" });
+
+  callState.isMuted = !!mute;
+  console.log(`Call is now ${callState.isMuted ? "Muted" : "Unmuted"}`);
+  res.json({ message: `Call ${callState.isMuted ? "muted" : "unmuted"}` });
 });
 
 app.listen(PORT, () => {
-  console.log(`Agora token server running at http://localhost:${PORT}`);
+  console.log(`Agora Call Backend running on http://localhost:${PORT}`);
 });
